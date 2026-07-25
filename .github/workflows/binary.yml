@@ -1,0 +1,157 @@
+name: Android NDK Build All Targets
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+
+jobs:
+  build:
+
+    name: Build all Android targets
+    runs-on: ubuntu-latest
+
+    env:
+      API: 35
+      EXPLOIT_DIR: IonStack/CVE-2026-43499/exploit
+      POC_DIR: IonStack/CVE-2026-43499/poc
+      NDK_VERSION: 29.0.13113456
+
+
+    steps:
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+
+      - name: Cache Android NDK
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ANDROID_SDK_ROOT }}/ndk
+          key: android-ndk-${{ env.NDK_VERSION }}
+
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager --install "ndk;${NDK_VERSION}"
+
+
+      - name: Configure Android NDK
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/${NDK_VERSION}" >> $GITHUB_ENV
+
+
+      - name: List targets
+        working-directory: ${{ env.EXPLOIT_DIR }}
+        run: |
+
+          find src/targets \
+            -mindepth 2 \
+            -maxdepth 2 \
+            -name target.h \
+            -printf '%h\n' \
+            | sed 's#src/targets/##' \
+            | sort \
+            > targets.txt
+
+
+          echo "Detected targets:"
+          cat targets.txt
+
+
+
+      - name: Build all exploit targets
+        working-directory: ${{ env.EXPLOIT_DIR }}
+        run: |
+
+          rm -rf build
+
+
+          while read PROJECT
+          do
+
+            echo
+            echo "======================================"
+            echo " Building: ${PROJECT}"
+            echo "======================================"
+
+
+            make \
+              API=${API} \
+              PROJECT=${PROJECT}
+
+
+          done < targets.txt
+
+
+
+      - name: Build poc
+        working-directory: ${{ env.POC_DIR }}
+        run: |
+
+          echo "Building poc.c"
+
+
+          $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${API}-clang \
+            poc.c \
+            -O2 \
+            -fPIE \
+            -pie \
+            -pthread \
+            -o poc
+
+
+
+      - name: Verify outputs
+        run: |
+
+          echo "=== preload.so files ==="
+
+          find ${{ env.EXPLOIT_DIR }}/build \
+            -name preload.so \
+            -exec file {} \;
+
+
+          echo
+          echo "=== poc ==="
+
+          file ${{ env.POC_DIR }}/poc
+
+
+          echo
+          echo "=== SHA256 ==="
+
+          find ${{ env.EXPLOIT_DIR }}/build \
+            -name preload.so \
+            -exec sha256sum {} \;
+
+
+          sha256sum ${{ env.POC_DIR }}/poc
+
+
+
+      - name: Upload all builds
+        uses: actions/upload-artifact@v4
+        with:
+
+          name: android-all-targets
+
+          path: |
+            IonStack/CVE-2026-43499/exploit/build/
+            IonStack/CVE-2026-43499/poc/poc
