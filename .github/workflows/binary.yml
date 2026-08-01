@@ -1,7 +1,12 @@
 name: Android NDK Build All Targets
 
 on:
+  push:
+    branches:
+      - main
+  pull_request:
   workflow_dispatch:
+
 
 jobs:
   build:
